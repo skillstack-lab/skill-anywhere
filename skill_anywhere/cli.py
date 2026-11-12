@@ -5,7 +5,8 @@ from pathlib import Path
 import sys
 
 from . import __version__
-from .core import Problem, install, root_for, targets, validate
+from .core import Problem, TARGET_PATHS, install, root_for, targets, validate
+from . import trust
 from .verify import verify
 
 
@@ -15,9 +16,20 @@ def parser():
     commands = result.add_subparsers(dest="command", required=True)
     check = commands.add_parser("validate", help="Validate a standard skill with skills-ref")
     check.add_argument("source", type=Path)
+    inspect_cmd = commands.add_parser("check", help="Show what a skill can do (static patterns, not a malware verdict)")
+    inspect_cmd.add_argument("source", help="Skill directory or git URL (https://, ssh://, git@host:path, file://)")
+    inspect_cmd.add_argument("--ref", help="Git branch, tag, or commit (git URL only)")
+    inspect_cmd.add_argument("--subdir", help="Skill directory inside the repository (git URL only)")
+    inspect_cmd.add_argument("--json", action="store_true", help="Print the full report as JSON")
     for command in ("install", "verify"):
         sub = commands.add_parser(command)
-        sub.add_argument("source", type=Path)
+        if command == "install":
+            sub.add_argument("source", help="Skill directory or git URL; the check report is shown first")
+            sub.add_argument("--ref", help="Git branch, tag, or commit (git URL only)")
+            sub.add_argument("--subdir", help="Skill directory inside the repository (git URL only)")
+            sub.add_argument("--yes", action="store_true", help="Approve the shown inventory and pin it in skill-anywhere.lock")
+        else:
+            sub.add_argument("source", type=Path)
         sub.add_argument("--target", required=True)
         sub.add_argument("--scope", choices=("project", "user"), default="project")
         sub.add_argument("--project", type=Path)
@@ -44,10 +56,29 @@ def main(argv=None):
             report = {"status": "PASS", "action": "validate", "name": skill["name"],
                       "validator": "skills-ref 0.1.0 (official source)", "isolated_frontmatter": []}
         else:
+            if args.command == "check":
+                with trust.resolve_source(args.source, args.ref, args.subdir) as (path, origin):
+                    found = trust.inspect(path)
+                if args.json:
+                    print(json.dumps({"status": "PASS", "action": "check", "origin": origin, **found}, indent=2))
+                else:
+                    print(trust.render(found, origin))
+                return 0
             requested = targets(args.target)
             root = root_for(args.scope, args.project)
             if args.command == "install":
-                report = install(args.source, requested, root)
+                with trust.resolve_source(args.source, args.ref, args.subdir) as (path, origin):
+                    skill = validate(path)
+                    print(trust.render(trust.inspect(path), origin), file=sys.stderr)
+                    if not trust.approve(args.yes, sys.stdin, sys.stderr):
+                        raise Problem("Approval required: review the inventory above, then re-run install with --yes", "BLOCKED")
+                    report = install(path, requested, root)
+                    try:
+                        entry = trust.write_lock(root, skill, origin, report["locations"])
+                    except OSError as exc:
+                        raise Problem("Installed, but skill-anywhere.lock could not be written", "BLOCKED") from exc
+                    report["lock"] = {"file": trust.LOCK_NAME, "source": entry["source"], "ref": entry["ref"],
+                                      "sha256": entry["sha256"]}
             else:
                 if not 0 < args.timeout <= 1800:
                     raise Problem("--timeout must be between 0 and 1800 seconds")
