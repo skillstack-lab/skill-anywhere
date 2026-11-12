@@ -24,7 +24,7 @@ skill-anywhere install examples/canary --target claude,codex,cursor --scope proj
 
 The source must be a directory containing `SKILL.md`, with a matching `name`. Optional scripts, references, assets, and other regular files are copied too. Every file byte and executable flag is retained. A local receipt records SHA-256 digests; it is an integrity record, not a signature.
 
-User scope is `skill-anywhere install examples/canary --target claude,codex,cursor --scope user`. It writes to the current user's home. Do not give `--project` for user scope. Existing skills or receipts are **never overwritten**. Use a new test project rather than deleting an existing installation blindly. Source and destination symlinks and special files are rejected in v0, even though some harnesses support symlinks.
+User scope is `skill-anywhere install examples/canary --target claude,codex,cursor --scope user`. It writes to the current user's home. Do not give `--project` for user scope. A re-install of a skill this CLI already owns (a matching receipt is present) is a no-op when the installed bytes already match the source. If a destination is a leftover symlink, or if file contents have drifted, re-install **refreshes a real copy**. Staleness is decided by SHA-256 digests and executable flags, never mtimes. Foreign skills or receipts this CLI did not write are still refused. Source trees, ancestor paths, and special files may not be symlinks; a leftover destination symlink is replaced on re-install.
 
 ### Documented paths
 
@@ -36,7 +36,7 @@ Checked against current official docs on **9 November 2026**:
 | `codex` | `.agents/skills/<name>/` | `~/.agents/skills/<name>/` | [Codex skills](https://learn.chatgpt.com/docs/build-skills.md) |
 | `cursor` | `.agents/skills/<name>/` | `~/.agents/skills/<name>/` | [Cursor skills](https://cursor.com/docs/skills) |
 
-Codex and Cursor share one physical copy when requested together. Claude gets a separate byte-identical copy. Claude's docs do not list `.agents/skills/`. Cursor also reads Claude compatibility paths: mixed installs can therefore expose duplicate names. v0 does not claim Cursor duplicate-name detection without a list API. Cold tests intentionally isolate each target; they do not prove mixed-project deduplication.
+Codex and Cursor share one physical copy when requested together. Claude gets a separate byte-identical **real copy**, not a symlink. Open Claude Code bugs report that symlinked skills and commands are not discovered or do not appear in autocomplete, so v0 never installs a symlink for any target. Claude's docs do not list `.agents/skills/`. Cursor also reads Claude compatibility paths: mixed installs can therefore expose duplicate names. v0 does not claim Cursor duplicate-name detection without a list API. Cold tests intentionally isolate each target; they do not prove mixed-project deduplication.
 
 Only the six standard frontmatter fields are accepted: `name`, `description`, `license`, `compatibility`, `metadata`, and experimental `allowed-tools`. Extra tool-specific fields are rejected with their names and an instruction to move them to an external overlay. v0 neither applies overlays nor silently drops fields; successful reports show `isolated_frontmatter: []`. The Markdown body is never rewritten. String lengths, directory-name agreement, YAML types, duplicate keys, and the official reference checker are enforced.
 
@@ -54,7 +54,7 @@ Exit codes are **0 PASS**, **1 FAIL** (a failed assertion), and **2 BLOCKED** (a
 
 The stages are:
 
-1. Validate the original and installed copies using `skills-ref`; compare complete file inventories and executable flags to the receipt and each other.
+1. Validate the original and installed copies using `skills-ref`; compare complete file inventories and executable flags to the receipt and each other, never mtimes. A leftover symlink or a content mismatch fails closed and tells you to re-run `install`, which refreshes a real copy. Verify itself does not rewrite files, so a tampered install still fails rather than being silently repaired.
 2. Check the binary version and authentication using only documented status commands.
 3. Create a fresh temporary project for each prompt. For project scope, install the already-verified bytes there through this installer, for that target alone. For user scope, start in an empty temporary project and use the actual user install. No prior conversation is resumed. Existing user-level settings/skills can still affect these processes; this is not a hermetic home or security sandbox.
 4. Query discovery when supported. Codex uses the documented local app-server [`skills/list`](https://developers.openai.com/codex/app-server) method without creating a thread or turn. A missing, disabled, duplicated, or wrong-path entry fails. An unavailable query blocks. Claude and Cursor expose interactive menus but no documented non-interactive skill-list command in these adapters, so discovery is explicitly **UNSUPPORTED**, not PASS.

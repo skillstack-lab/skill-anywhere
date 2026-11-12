@@ -57,12 +57,46 @@ def targets(value):
     return result
 
 
-def no_links(path):
+def no_links(path, allow_leaf=False):
     """Reject symlink traversal in an existing path or any of its ancestors."""
     path = Path(path).absolute()
-    for part in (path, *path.parents):
+    parts = path.parents if allow_leaf else (path, *path.parents)
+    for part in parts:
         if part.is_symlink():
             raise Problem("Symlink paths are not supported by this installer")
+
+
+def stale(dest, skill):
+    """True when dest is missing, a symlink, or its contents differ from skill.
+
+    Comparison uses SHA-256 digests and executable flags, never mtime.
+    """
+    dest = Path(dest)
+    if dest.is_symlink() or not dest.exists():
+        return True
+    try:
+        current = validate(dest)
+    except Problem:
+        return True
+    return current["files"] != skill["files"] or current["body"] != skill["body"]
+
+
+def _write_receipt(path, value, exclusive=False):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if exclusive:
+        with path.open("x", encoding="utf-8") as handle:
+            json.dump(value, handle, indent=2)
+            handle.write("\n")
+        return
+    handle, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            json.dump(value, out, indent=2)
+            out.write("\n")
+        os.replace(tmp, path)
+    except Exception:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def inventory(path):
@@ -156,46 +190,72 @@ def install(source, requested, root):
     locations = list(dict.fromkeys(TARGET_PATHS[t] + "/" + name for t in requested))
     dests = [root / location for location in locations]
     receipt = receipt_path(root, name)
-    for dest in dests + [receipt]:
-        no_links(dest)
-        if dest.exists():
-            raise Problem("Refusing to replace an existing install or receipt")
+    for dest in dests:
+        no_links(dest, allow_leaf=True)
         if dest.is_relative_to(source):
             raise Problem("Install destination cannot be inside source skill")
-    # Stage all copies before making any visible. Roll back only our new trees.
-    staged, published = [], []
-    receipt_created = False
+    no_links(receipt)
+    record = None
+    if receipt.exists():
+        try:
+            record = json.loads(receipt.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise Problem("Missing or invalid install receipt") from exc
+        if not isinstance(record, dict) or record.get("format") != 1 or record.get("name") != name:
+            raise Problem("Invalid install receipt format")
+    elif any(item.exists() or item.is_symlink() for item in dests):
+        raise Problem("Refusing to replace an existing install or receipt")
+    stale_dests = [dest for dest in dests if stale(dest, skill)]
+    merged_targets = list(dict.fromkeys([*(record or {}).get("targets", []), *requested]))
+    merged_locations = list(dict.fromkeys([*(record or {}).get("locations", []), *locations]))
+    value = {"format": 1, "name": name, "targets": merged_targets, "locations": merged_locations, "files": skill["files"]}
+    if not stale_dests and record == value:
+        return {"status": "PASS", "action": "unchanged", "name": name, "locations": merged_locations,
+                "body_byte_identical": True, "validator": "skills-ref 0.1.0 (official source)", "isolated_frontmatter": []}
+    action = "install" if record is None else "refresh"
+    # Stage copies before replacing any visible tree. Roll back only our changes.
+    staged, published, backups = [], [], []
+    receipt_written = False
+    previous_receipt = receipt.read_text(encoding="utf-8") if receipt.exists() else None
     try:
-        for dest in dests:
+        for dest in stale_dests:
             dest.parent.mkdir(parents=True, exist_ok=True)
             stage = Path(tempfile.mkdtemp(prefix=".skill-anywhere-", dir=dest.parent))
             staged.append(stage)
             shutil.copytree(source, stage / name)
-            copied = stage / name
-            if validate(copied)["files"] != skill["files"]:
+            if validate(stage / name)["files"] != skill["files"]:
                 raise Problem("Source changed during install")
-        for dest, stage in zip(dests, staged):
+        for dest, stage in zip(stale_dests, staged):
+            if dest.exists() or dest.is_symlink():
+                backup = Path(tempfile.mkdtemp(prefix=".skill-anywhere-bak-", dir=dest.parent))
+                dest.rename(backup / name)
+                backups.append((dest, backup))
             if dest.exists() or dest.is_symlink():
                 raise Problem("Install destination appeared during install")
             (stage / name).rename(dest)
             published.append(dest)
-        value = {"format": 1, "name": name, "targets": requested, "locations": locations, "files": skill["files"]}
-        receipt.parent.mkdir(parents=True, exist_ok=True)
-        # Exclusive create also protects against a concurrent install.
-        with receipt.open("x", encoding="utf-8") as handle:
-            receipt_created = True
-            json.dump(value, handle, indent=2)
-            handle.write("\n")
+        _write_receipt(receipt, value, exclusive=record is None)
+        receipt_written = True
     except Exception:
-        if receipt_created:
-            receipt.unlink(missing_ok=True)
+        if receipt_written:
+            if previous_receipt is None:
+                receipt.unlink(missing_ok=True)
+            else:
+                receipt.write_text(previous_receipt, encoding="utf-8")
         for dest in published:
-            shutil.rmtree(dest)
+            if dest.is_symlink() or dest.is_file():
+                dest.unlink(missing_ok=True)
+            elif dest.exists():
+                shutil.rmtree(dest)
+        for dest, backup in backups:
+            (backup / name).rename(dest)
         raise
     finally:
         for stage in staged:
             shutil.rmtree(stage, ignore_errors=True)
-    return {"status": "PASS", "action": "install", "name": name, "locations": locations,
+        for _, backup in backups:
+            shutil.rmtree(backup, ignore_errors=True)
+    return {"status": "PASS", "action": action, "name": name, "locations": merged_locations,
             "body_byte_identical": True, "validator": "skills-ref 0.1.0 (official source)", "isolated_frontmatter": []}
 
 
@@ -210,13 +270,15 @@ def static_verify(source, requested, root):
     if not isinstance(record, dict) or record.get("format") != 1 or record.get("name") != skill["name"]:
         raise Problem("Invalid install receipt format")
     if record.get("files") != skill["files"]:
-        raise Problem("Source no longer matches install receipt")
+        raise Problem("Source no longer matches install receipt; re-run install to refresh")
     for target in requested:
         location = TARGET_PATHS[target] + "/" + skill["name"]
         if target not in record.get("targets", []) or location not in record.get("locations", []):
             raise Problem("Requested target was not installed")
         dest = root / location
+        if dest.is_symlink():
+            raise Problem("Installed copy is a symlink; re-run install to refresh a real copy")
         current = validate(dest)
         if current["files"] != skill["files"] or current["body"] != skill["body"]:
-            raise Problem("Installed files or body differ from source")
+            raise Problem("Installed files or body differ from source; re-run install to refresh")
     return skill

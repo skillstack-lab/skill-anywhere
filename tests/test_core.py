@@ -1,5 +1,7 @@
 import json
+import os
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -97,10 +99,78 @@ class CoreTests(unittest.TestCase):
         install(self.source, ["codex"], self.project)
         self.assertTrue(inventory(self.project / ".agents/skills/canary")["scripts/hello"]["executable"])
 
-    def test_refuse_existing(self):
-        install(self.source, ["claude"], self.project)
+    def test_identical_reinstall_is_unchanged(self):
+        first = install(self.source, ["claude"], self.project)
+        dest = self.project / ".claude/skills/canary"
+        inode = dest.stat().st_ino
+        result = install(self.source, ["claude"], self.project)
+        self.assertEqual(first["action"], "install")
+        self.assertEqual(result["action"], "unchanged")
+        self.assertEqual(dest.stat().st_ino, inode)
+        static_verify(self.source, ["claude"], self.project)
+
+    def test_refuse_foreign_without_receipt(self):
+        dest = self.project / ".claude/skills/canary"
+        dest.mkdir(parents=True)
+        (dest / "SKILL.md").write_bytes((self.source / "SKILL.md").read_bytes())
         with self.assertRaisesRegex(Problem, "Refusing"):
             install(self.source, ["claude"], self.project)
+
+    def test_installs_are_real_copies_not_symlinks(self):
+        result = install(self.source, ["claude", "codex", "cursor"], self.project)
+        claude = self.project / ".claude/skills/canary"
+        agents = self.project / ".agents/skills/canary"
+        self.assertEqual(len(result["locations"]), 2)
+        for path in (claude, agents):
+            self.assertTrue(path.is_dir())
+            self.assertFalse(path.is_symlink())
+            for item in path.rglob("*"):
+                self.assertFalse(item.is_symlink())
+        self.assertNotEqual(claude.stat().st_ino, agents.stat().st_ino)
+        self.assertEqual((claude / "SKILL.md").read_bytes(), (agents / "SKILL.md").read_bytes())
+
+    def test_refresh_stale_copy_by_content_not_mtime(self):
+        install(self.source, ["claude", "codex"], self.project)
+        dest = self.project / ".claude/skills/canary/SKILL.md"
+        shared = self.project / ".agents/skills/canary/SKILL.md"
+        updated = (self.source / "SKILL.md").read_bytes() + b"updated\n"
+        (self.source / "SKILL.md").write_bytes(updated)
+        os.utime(dest, (1_900_000_000, 1_900_000_000))
+        os.utime(shared, (1_900_000_000, 1_900_000_000))
+        os.utime(self.source / "SKILL.md", (1, 1))
+        result = install(self.source, ["claude", "codex"], self.project)
+        self.assertEqual(result["action"], "refresh")
+        self.assertEqual(dest.read_bytes(), updated)
+        self.assertEqual(shared.read_bytes(), updated)
+        self.assertFalse(dest.parent.is_symlink())
+        self.assertFalse(shared.parent.is_symlink())
+        static_verify(self.source, ["claude", "codex"], self.project)
+
+    def test_refresh_replaces_symlink_with_real_copy(self):
+        install(self.source, ["claude", "codex"], self.project)
+        claude = self.project / ".claude/skills/canary"
+        agents = self.project / ".agents/skills/canary"
+        shutil.rmtree(claude)
+        claude.symlink_to(agents)
+        self.assertTrue(claude.is_symlink())
+        with self.assertRaisesRegex(Problem, "symlink"):
+            static_verify(self.source, ["claude"], self.project)
+        result = install(self.source, ["claude", "codex"], self.project)
+        self.assertEqual(result["action"], "refresh")
+        self.assertFalse(claude.is_symlink())
+        self.assertTrue(claude.is_dir())
+        self.assertEqual(inventory(claude), inventory(self.source))
+        self.assertNotEqual((claude / "SKILL.md").stat().st_ino, (agents / "SKILL.md").stat().st_ino)
+        static_verify(self.source, ["claude", "codex"], self.project)
+
+    def test_refresh_recreates_missing_dest(self):
+        install(self.source, ["claude"], self.project)
+        dest = self.project / ".claude/skills/canary"
+        shutil.rmtree(dest)
+        result = install(self.source, ["claude"], self.project)
+        self.assertEqual(result["action"], "refresh")
+        self.assertTrue((dest / "SKILL.md").exists())
+        static_verify(self.source, ["claude"], self.project)
 
     def test_symlink_source_rejected(self):
         (self.source / "linked").symlink_to(self.source / "SKILL.md")
