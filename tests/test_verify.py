@@ -353,6 +353,33 @@ class VerifyTests(unittest.TestCase):
         self.assertEqual(trace["tools"], [])
         self.assertNotIn("multiply", trace["text"])
 
+    def cursor_tool_events(self, extra):
+        call = {"shellToolCall": {"args": {"command": "scripts/clip-cutter --date 2026-09-27 --team CHC --plan-only"}, "result": {}},
+                "toolCallId": "call-1", "startedAtMs": "1", "completedAtMs": "2", **extra}
+        return [
+            {"type": "system", "subtype": "init"},
+            {"type": "tool_call", "subtype": "started", "call_id": "c1", "tool_call": dict(call)},
+            {"type": "tool_call", "subtype": "completed", "call_id": "c1", "tool_call": dict(call)},
+            {"type": "result", "subtype": "success", "is_error": False, "result": "T1: x"},
+        ]
+
+    def test_cursor_tool_call_bookkeeping_keys_are_not_opaque(self):
+        values = self.cursor_tool_events({"hookAdditionalContexts": []})
+        trace = adapters.parse_trace("cursor", "\n".join(json.dumps(v) for v in values))
+        self.assertFalse(trace["opaque"])
+        self.assertEqual(len(trace["tools"]), 1)
+
+    def test_cursor_hook_context_or_unknown_tool_key_is_opaque(self):
+        for extra in ({"hookAdditionalContexts": ["injected"]}, {"mysteryToolCall": {}}):
+            values = self.cursor_tool_events(extra)
+            trace = adapters.parse_trace("cursor", "\n".join(json.dumps(v) for v in values))
+            self.assertTrue(trace["opaque"], extra)
+
+    def test_markdown_bold_and_bot_inning_labels_are_a_plan(self):
+        self.assertTrue(answer_has_plan("- **Top 1:** Homer\n- **Bot 1:** Strikeout\n- **Top 3:** Homer again"))
+        self.assertTrue(answer_has_plan("- top 1: Homer\n- bot 1: Strikeout\n- bot 5: Dive"))
+        self.assertFalse(answer_has_plan("- **Bot 1:** Strikeout\n- **Top 1:** Homer"))
+
     def test_cursor_unknown_event_is_opaque(self):
         values = [
             {"type": "system", "subtype": "init"},

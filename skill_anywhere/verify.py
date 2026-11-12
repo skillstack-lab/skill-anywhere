@@ -52,9 +52,9 @@ def inning_key(value):
     if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 30:
         return value * 2
     if isinstance(value, str):
-        match = re.fullmatch(r"\s*(T|B|Top|Bottom)?\s*(\d{1,2})(?:st|nd|rd|th)?\s*", value, re.I)
+        match = re.fullmatch(r"\s*(T|B|Top|Bot|Bottom)?\s*(\d{1,2})(?:st|nd|rd|th)?\s*", value, re.I)
         if match and 1 <= int(match[2]) <= 30:
-            return int(match[2]) * 2 + (1 if (match[1] or "").lower() in ("b", "bottom") else 0)
+            return int(match[2]) * 2 + (1 if (match[1] or "").lower() in ("b", "bot", "bottom") else 0)
     raise Problem("Plan has an unrecognized inning")
 
 
@@ -93,7 +93,8 @@ def answer_has_plan(text):
             return True
     items = []
     for line in text.splitlines():
-        match = re.match(r"\s*(?:[-*]\s*)?(T\d{1,2}|B\d{1,2}|(?:Top|Bottom)\s+\d{1,2}|\d{1,2}(?:st|nd|rd|th)?)\s*[:—–-]\s*(\S.+)", line, re.I)
+        line = re.sub(r"[*_`]", "", line)  # markdown emphasis, e.g. "- **Top 1:** headline"
+        match = re.match(r"\s*(?:[-*]\s*)?(T\d{1,2}|B\d{1,2}|(?:Top|Bot|Bottom)\s+\d{1,2}|\d{1,2}(?:st|nd|rd|th)?)\s*[:—–-]\s*(\S.+)", line, re.I)
         if match:
             items.append(inning_key(match[1]))
     return bool(items) and items == sorted(items)

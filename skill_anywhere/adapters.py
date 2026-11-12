@@ -301,6 +301,10 @@ def parse_trace(target, stdout):
                                 opaque = True
                                 args = {}
                         tools.append({"name": tool.get("name", ""), "args": args})
+                    elif key in ("toolCallId", "startedAtMs", "completedAtMs"):
+                        pass  # per-call bookkeeping that Cursor adds beside the tool payload
+                    elif key == "hookAdditionalContexts" and tool == []:
+                        pass  # no hook injected extra context into this call
                     else:
                         opaque = True
             elif kind in ("system", "rate_limit_event"):
