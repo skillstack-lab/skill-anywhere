@@ -75,10 +75,17 @@ def cold_command(target, binary, prompt, expected_path=None, case=None):
     if target == "claude":
         allowed = "Read,Skill"
         if case == "lunch-reel" and expected_path is not None:
-            base = Path(expected_path).parent / "scripts"
-            allowed += ",Bash(" + str(base / "clip-cutter") + " 824705 --plan-only *)"
-            allowed += ",Bash(" + str(base / "clip-cutter") + " --date 2026-09-27 --team CHC --plan-only *)"
+            skill = Path(expected_path).parent
+            base = skill / "scripts"
+            cutter = str(base / "clip-cutter")
+            allowed += ",Bash(" + cutter + " 824705 --plan-only *)"
+            allowed += ",Bash(" + cutter + " --date 2026-09-27 --team CHC --plan-only *)"
             allowed += ",Bash(python3 " + str(base / "reel2.py") + " 824705 --plan-only *)"
+            # Agents often cd into the skill folder and run the documented relative command.
+            allowed += ",Bash(cd " + str(skill) + " && scripts/clip-cutter 824705 --plan-only *)"
+            allowed += ",Bash(cd " + str(skill) + " && scripts/clip-cutter --date 2026-09-27 --team CHC --plan-only *)"
+            allowed += ",Bash(scripts/clip-cutter 824705 --plan-only *)"
+            allowed += ",Bash(scripts/clip-cutter --date 2026-09-27 --team CHC --plan-only *)"
         return [binary, "-p", prompt, "--output-format", "stream-json", "--verbose",
                 "--no-session-persistence", "--permission-mode", "dontAsk", "--effort", "low",
                 "--allowedTools", allowed]
@@ -105,8 +112,8 @@ def write_cursor_lunch_permissions(root):
     """
     config = Path(root) / ".cursor" / "cli.json"
     config.parent.mkdir(parents=True, exist_ok=True)
+    # Project cli.json accepts only permissions; a top-level "version" is rejected.
     value = {
-        "version": 1,
         "permissions": {
             "allow": [
                 "Shell(scripts/clip-cutter:*--plan-only*)",

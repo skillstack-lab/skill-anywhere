@@ -80,6 +80,7 @@ class VerifyTests(unittest.TestCase):
         value = json.loads(path.read_text(encoding="utf-8"))
         allow = " ".join(value["permissions"]["allow"])
         deny = " ".join(value["permissions"]["deny"])
+        self.assertNotIn("version", value)
         self.assertIn("--plan-only", allow)
         self.assertIn("clip-cutter", allow)
         self.assertIn("reel2.py", allow)
@@ -321,8 +322,13 @@ class VerifyTests(unittest.TestCase):
         command = adapters.cold_command("claude", "fixture", "prompt", self.source / "SKILL.md", "lunch-reel")
         permissions = command[command.index("--allowedTools") + 1]
         self.assertIn("--plan-only", permissions)
+        self.assertIn("cd " + str((self.source / "SKILL.md").parent) + " && scripts/clip-cutter", permissions)
         self.assertNotIn(",Bash,", permissions)
         self.assertNotIn("--dangerously-skip-permissions", command)
+        self.assertNotIn("--max-seconds 300 2", permissions)  # render-style grants stay out
+        for grant in permissions.split(","):
+            if "clip-cutter" in grant or "reel2.py" in grant:
+                self.assertIn("--plan-only", grant)
 
     def test_explicit_missing_cli_stays_blocked(self):
         result = self.run_case(mode="unauth")
