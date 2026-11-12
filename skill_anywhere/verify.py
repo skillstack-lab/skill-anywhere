@@ -8,7 +8,8 @@ import tempfile
 from zoneinfo import ZoneInfo
 
 from . import adapters
-from .core import DOCS, Problem, TARGET_PATHS, install, static_verify
+from . import trust
+from .core import DOCS, Problem, TARGET_PATHS, install, static_verify, validate
 
 MEDIA = {".mp4", ".m4v", ".mov", ".webm", ".mkv", ".m4s"}
 TRIGGER = "Run the skill-anywhere canary."
@@ -198,6 +199,8 @@ def save_evidence(folder, target, case, value):
 def verify(source, requested, root, scope="project", case="canary", live=False,
            overrides=None, timeout=120, trigger=None, negative=None, expected=None,
            evidence=None, blocked=None, follow_only=False):
+    name = validate(source)["name"]
+    lock = trust.check_drift(root, name, [TARGET_PATHS[t] + "/" + name for t in requested])
     skill = static_verify(source, requested, root)
     trigger, negative, expected = contract(skill, case, trigger, negative, expected)
     if follow_only and case != "lunch-reel":
@@ -205,7 +208,7 @@ def verify(source, requested, root, scope="project", case="canary", live=False,
     results = []
     for target in requested:
         row = {"target": target, "time_ct": stamp(), "path": TARGET_PATHS[target] + "/" + skill["name"],
-               "docs": DOCS[target], "static": "PASS", "version": "unavailable", "discovery": {"status": "BLOCKED"},
+               "docs": DOCS[target], "static": "PASS", "lock": lock or "none", "version": "unavailable", "discovery": {"status": "BLOCKED"},
                "trigger": {"status": "BLOCKED"}, "negative": {"status": "BLOCKED"}}
         traces = {}
         try:

@@ -19,12 +19,14 @@ Validation uses the official `skills-ref` Python API, pinned to the source archi
 ```sh
 skill-anywhere validate examples/canary
 project=$(mktemp -d)
-skill-anywhere install examples/canary --target claude,codex,cursor --scope project --project "$project"
+skill-anywhere install examples/canary --target claude,codex,cursor --scope project --project "$project" --yes
 ```
+
+`install` first prints the trust inventory below and needs `--yes` (or an interactive `y`); read it before approving. See [Trust check](#trust-check-what-a-skill-can-do-and-what-you-approved).
 
 The source must be a directory containing `SKILL.md`, with a matching `name`. Optional scripts, references, assets, and other regular files are copied too. Every file byte and executable flag is retained. A local receipt records SHA-256 digests; it is an integrity record, not a signature.
 
-User scope is `skill-anywhere install examples/canary --target claude,codex,cursor --scope user`. It writes to the current user's home. Do not give `--project` for user scope. A re-install of a skill this CLI already owns (a matching receipt is present) is a no-op when the installed bytes already match the source. If a destination is a leftover symlink, or if file contents have drifted, re-install **refreshes a real copy**. Staleness is decided by SHA-256 digests and executable flags, never mtimes. Foreign skills or receipts this CLI did not write are still refused. Source trees, ancestor paths, and special files may not be symlinks; a leftover destination symlink is replaced on re-install.
+User scope is `skill-anywhere install examples/canary --target claude,codex,cursor --scope user --yes`. It writes to the current user's home. Do not give `--project` for user scope. A re-install of a skill this CLI already owns (a matching receipt is present) is a no-op when the installed bytes already match the source. If a destination is a leftover symlink, or if file contents have drifted, re-install **refreshes a real copy**. Staleness is decided by SHA-256 digests and executable flags, never mtimes. Foreign skills or receipts this CLI did not write are still refused. Source trees, ancestor paths, and special files may not be symlinks; a leftover destination symlink is replaced on re-install.
 
 ### Documented paths
 
@@ -39,6 +41,30 @@ Checked against current official docs on **9 November 2026**:
 Codex and Cursor share one physical copy when requested together. Claude gets a separate byte-identical **real copy**, not a symlink. Open Claude Code bugs report that symlinked skills and commands are not discovered or do not appear in autocomplete, so v0 never installs a symlink for any target. Claude's docs do not list `.agents/skills/`. Cursor also reads Claude compatibility paths: mixed installs can therefore expose duplicate names. v0 does not claim Cursor duplicate-name detection without a list API. Cold tests intentionally isolate each target; they do not prove mixed-project deduplication.
 
 Only the six standard frontmatter fields are accepted: `name`, `description`, `license`, `compatibility`, `metadata`, and experimental `allowed-tools`. Extra tool-specific fields are rejected with their names and an instruction to move them to an external overlay. v0 neither applies overlays nor silently drops fields; successful reports show `isolated_frontmatter: []`. The Markdown body is never rewritten. String lengths, directory-name agreement, YAML types, duplicate keys, and the official reference checker are enforced.
+
+## Trust check: what a skill can do, and what you approved
+
+A skill runs with your agent's permissions, and scanners can be bypassed by editing a skill after it passed. This adds a look before install and a pin after it. It is **static pattern matching only. It is not a malware verdict**, and a clean report does not mean a skill is safe.
+
+```sh
+skill-anywhere check path/to/skill                      # or a git URL: https://..., ssh://..., git@host:org/repo, file://...
+skill-anywhere check https://github.com/org/repo --subdir skills/my-skill --ref v1.2.0   # --json for the full report
+```
+
+The report lists files and sizes, `scripts/` and executable files, capability frontmatter such as `allowed-tools` (called out when it grants `Bash` or `*` without narrowing), and per-line flags for **shell** execution, **network** (with the distinct hosts), **credentials/env** (with the env var names), and **writes** (file creation or deletion whose destination may be outside the skill directory). Shell and write patterns in Markdown only count inside code fences or backticks; comment lines in scripts are skipped; binary files are listed as not scanned. It fits one screen: each flag shows three example lines and a count, and `--json` has all of them. The scan never runs the skill. A git source is cloned with hooks disabled, `.git` is dropped, and only `https`, `ssh`, `git@` and `file://` URLs are accepted.
+
+`install` runs the same report first (on stderr), then requires `--yes` or an interactive `y`. Without approval it exits 2 (BLOCKED) and writes nothing. On approval it writes `skill-anywhere.lock` at the install root (the project directory, or your home for `--scope user`): source, git ref (the commit for a git URL, or the checkout's `HEAD` for a local directory, otherwise `null`), a SHA-256 over the whole skill directory, per-file hashes, and where it was installed. Re-installing needs approval again and replaces that skill's lock entry.
+
+`verify` re-hashes every installed copy it is asked about and **fails**, naming the changed, missing and added files, when a copy no longer matches its lock. Installs made before the lock existed report `"lock": "none"`. Drift is only detected; there is no update command, and re-approving means re-running `install`. The lock is an integrity record kept next to the files it protects, not a signature, so someone who can edit both can edit both.
+
+### Lunch Reel's own report, explained
+
+`skill-anywhere check path/to/lunch-reel/skills/clip-cutter` shows 5 files and four kinds of flag. All of them match what the skill says it does; none is hidden:
+
+- **shell:** `scripts/clip-cutter` ends with `exec python3 reel2.py`, and `reel2.py` calls `subprocess` to run `ffmpeg` and `curl`, but only to render a reel: every `--plan-only` path prints the plan and returns before them. The wrapper only checks that `ffmpeg`, `ffprobe` and `curl` exist.
+- **network:** `reel2.py` fetches schedule, game content and clip URLs from `statsapi.mlb.com`, and `curl` downloads only the highlight clips needed for a render. That is the only host.
+- **credentials/env:** it reads `CLIP_CUTTER_HOME` and `CLIP_CUTTER_TEAMS` (its own settings), plus `HOME` and `XDG_CACHE_HOME` to find a default cache directory. No secret names appear.
+- **writes:** the wrapper creates the data home (`mkdir -p`), and `reel2.py` writes `cache/` and `out/` there. That home is outside the skill folder by design, so the skill folder stays read-only.
 
 ## Verify, explicitly opting into live calls
 
@@ -86,7 +112,7 @@ Use a separately obtained, unmodified copy of public [Lunch Reel](https://github
 ```sh
 lunch_project=$(mktemp -d)
 skill-anywhere validate path/to/lunch-reel/skills/clip-cutter
-skill-anywhere install path/to/lunch-reel/skills/clip-cutter --target claude,codex,cursor --project "$lunch_project"
+skill-anywhere install path/to/lunch-reel/skills/clip-cutter --target claude,codex,cursor --project "$lunch_project" --yes
 skill-anywhere verify path/to/lunch-reel/skills/clip-cutter --target claude --project "$lunch_project" --case lunch-reel --live --follow-only --evidence "$HOME/skill-anywhere-evidence"
 # Repeat that verify line with --target codex and --target cursor.
 ```
@@ -106,7 +132,7 @@ python -m unittest discover -s tests -v
 python -m unittest discover -s tests -v
 ```
 
-Unit tests invoke only explicit offline fixture executables, never a real harness. They cover all three event adapters, official schema validation, clean processes, inventory/body tampering, missing binaries/auth, negative-trigger failures, opaque/incomplete traces, Codex discovery failures, and plan-only assertions. CI runs those unit tests twice and makes no model calls.
+Unit tests invoke only explicit offline fixture executables, never a real harness. They cover the trust check (inventory fixtures, approval, lock, drift, git sources) and all three event adapters, official schema validation, clean processes, inventory/body tampering, missing binaries/auth, negative-trigger failures, opaque/incomplete traces, Codex discovery failures, and plan-only assertions. CI runs those unit tests twice and makes no model calls.
 
 Layout-only sketches for Copilot, Gemini CLI, Antigravity, and OpenCode are in `SKETCHES` in `skill_anywhere/core.py`; they are not accepted install or verify targets. Their cited official docs are pointers, not runtime support claims.
 
