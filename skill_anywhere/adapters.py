@@ -269,6 +269,9 @@ def parse_trace(target, stdout):
                     initialized = True
                 if value.get("subtype") in ("api_retry", "error"):
                     raise Problem("Harness retry/error observed; stop and inspect", "BLOCKED")
+            elif kind == "thinking" and value.get("subtype") in ("delta", "completed"):
+                # Cursor emits thinking events on some turns. They are not tools or answers.
+                pass
             else:
                 opaque = True
     if not terminal or not initialized or (target == "codex" and not turn_started):

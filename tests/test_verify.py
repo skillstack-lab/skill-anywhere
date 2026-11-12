@@ -268,6 +268,30 @@ class VerifyTests(unittest.TestCase):
         with self.assertRaises(Problem):
             adapters.parse_trace("cursor", "\n".join(json.dumps(v) for v in values))
 
+    def test_cursor_thinking_events_are_not_opaque(self):
+        values = [
+            {"type": "system", "subtype": "init"},
+            {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "What is 17 × 19?"}]}},
+            {"type": "thinking", "subtype": "delta", "text": "multiply"},
+            {"type": "thinking", "subtype": "completed"},
+            {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "323"}]}},
+            {"type": "result", "subtype": "success", "is_error": False, "result": "323"},
+        ]
+        trace = adapters.parse_trace("cursor", "\n".join(json.dumps(v) for v in values))
+        self.assertFalse(trace["opaque"])
+        self.assertEqual(trace["text"].strip(), "323")
+        self.assertEqual(trace["tools"], [])
+        self.assertNotIn("multiply", trace["text"])
+
+    def test_cursor_unknown_event_is_opaque(self):
+        values = [
+            {"type": "system", "subtype": "init"},
+            {"type": "mystery", "payload": "x"},
+            {"type": "result", "subtype": "success", "is_error": False, "result": "323"},
+        ]
+        trace = adapters.parse_trace("cursor", "\n".join(json.dumps(v) for v in values))
+        self.assertTrue(trace["opaque"])
+
     def test_claude_plan_permissions_narrow(self):
         command = adapters.cold_command("claude", "fixture", "prompt", self.source / "SKILL.md", "lunch-reel")
         permissions = command[command.index("--allowedTools") + 1]
