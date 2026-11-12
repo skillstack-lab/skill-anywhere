@@ -54,6 +54,14 @@ class VerifyTests(unittest.TestCase):
     def test_cursor_stub_pass(self):
         self.assertEqual(self.run_case("cursor")["status"], "PASS")
 
+    def test_cursor_cold_command_trusts_temp_workspace(self):
+        command = adapters.cold_command("cursor", "agent", "hello")
+        self.assertIn("--trust", command)
+        self.assertIn("--mode", command)
+        self.assertNotIn("--yolo", command)
+        self.assertNotIn("--force", command)
+        self.assertNotIn("-f", command)
+
     def test_negative_load_fails_all_adapters(self):
         for target in ("claude", "codex", "cursor"):
             with self.subTest(target=target):

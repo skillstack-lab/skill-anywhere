@@ -84,7 +84,9 @@ def cold_command(target, binary, prompt, expected_path=None, case=None):
                 "--allowedTools", allowed]
     if target == "codex":
         return [binary, "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", prompt]
-    return [binary, "-p", prompt, "--output-format", "stream-json", "--mode", "ask"]
+    # --trust is required for a non-interactive start in the throwaway temp project.
+    # Do not pass --force/--yolo: those auto-approve command execution.
+    return [binary, "-p", prompt, "--output-format", "stream-json", "--mode", "ask", "--trust"]
 
 
 def discover(target, binary, cwd, name, expected, timeout):
