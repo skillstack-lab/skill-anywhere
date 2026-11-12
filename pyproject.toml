@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skill-anywhere"
+version = "0.1.0"
+description = "Install standard skills and verify cold harness behavior."
+requires-python = ">=3.11"
+license = "MIT"
+readme = "README.md"
+dependencies = ["PyYAML>=6.0.2,<7", "skills-ref @ https://github.com/agentskills/agentskills/archive/83021e2be457a9b6679148719c1f6074f0ad975e.tar.gz#subdirectory=skills-ref"]
+
+[project.scripts]
+skill-anywhere = "skill_anywhere.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["skill_anywhere*"]
