@@ -99,20 +99,30 @@ def answer_has_plan(text):
     return bool(items) and items == sorted(items)
 
 
+CUTTER_PATH = re.compile(r"(?:scripts/clip-cutter|scripts/reel2\.py)\b")
+INSPECT_COMMAND = re.compile(r"\s*(?:cat|head|less|more|tail|wc|file|rg|grep|ls|stat)\b")
+
+
+def clip_subcommands(command):
+    """Return shell parts that invoke clip-cutter or reel2.py, not inspect-only mentions."""
+    parts = re.split(r"\s*(?:&&|\|\||[;\n]|\|)\s*", command)
+    return [part for part in parts if CUTTER_PATH.search(part) and not INSPECT_COMMAND.match(part)]
+
+
 def lunch_check(trace):
     planned = False
     for tool in trace["tools"]:
         if tool["name"] not in ("Bash", "shell", "run_terminal_cmd"):
             continue
         command = str(tool["args"].get("command", ""))
-        cutter = bool(re.search(r"(?:scripts/clip-cutter|scripts/reel2\.py)\b", command))
-        if cutter and "--plan-only" in command and (
-            "824705" in command or ("2026-09-27" in command and ("CHC" in command or "112" in command))
-        ):
-            planned = True
-        # A render invocation is a failure even if no video remains at the end.
-        if cutter and "--plan-only" not in command and not re.match(r"\s*(?:cat|head|less|rg)\s", command):
-            raise Problem("Clip command without --plan-only observed")
+        for part in clip_subcommands(command):
+            if "--plan-only" in part and (
+                "824705" in part or ("2026-09-27" in part and ("CHC" in part or "112" in part))
+            ):
+                planned = True
+            # A render invocation is a failure even if no video remains at the end.
+            if "--plan-only" not in part:
+                raise Problem("Clip command without --plan-only observed")
     if not planned:
         raise Problem("No observed known-game plan-only command")
     if not answer_has_plan(trace["text"]):
@@ -151,7 +161,9 @@ def cold(target, binary, installed, scope, name, prompt, timeout, case):
         if target == "cursor" and case == "lunch-reel":
             adapters.write_cursor_lunch_permissions(root)
         env = dict(os.environ)
-        env["CLIP_CUTTER_HOME"] = str(root / ".clip-cutter-data")
+        home = root / ".clip-cutter-data"
+        home.mkdir(parents=True, exist_ok=True)
+        env["CLIP_CUTTER_HOME"] = str(home)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         proc = adapters.run(adapters.cold_command(target, binary, prompt, expected_path, case), root, timeout, env)
         if proc.returncode != 0:

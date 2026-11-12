@@ -12,7 +12,7 @@ from unittest.mock import patch
 from skill_anywhere import adapters
 from skill_anywhere.cli import main
 from skill_anywhere.core import Problem, install
-from skill_anywhere.verify import answer_has_plan, contract, negative_check, verify
+from skill_anywhere.verify import answer_has_plan, contract, lunch_check, negative_check, verify
 
 CANARY = Path(__file__).resolve().parents[1] / "examples/canary"
 STUB = Path(__file__).with_name("stub_harness.py")
@@ -275,6 +275,50 @@ class VerifyTests(unittest.TestCase):
         self.assertEqual(result["status"], "BLOCKED")
         self.assertEqual(result["results"][0]["trigger"]["status"], "PASS")
         self.assertEqual(sum("-p" in c["args"] for c in self.calls()), 1)
+
+    def test_lunch_creates_clip_cutter_home(self):
+        seen = {}
+        real_run = adapters.run
+
+        def wrapped(argv, cwd, timeout, env=None):
+            if env and env.get("CLIP_CUTTER_HOME"):
+                home = Path(env["CLIP_CUTTER_HOME"])
+                seen["exists"] = home.is_dir()
+                seen["inside"] = Path(cwd) in home.parents or home.parent == Path(cwd)
+                seen["name"] = home.name
+            return real_run(argv, cwd, timeout, env)
+
+        with patch("skill_anywhere.adapters.run", wrapped):
+            self.assertEqual(self.lunch()["status"], "PASS")
+        self.assertTrue(seen["exists"])
+        self.assertTrue(seen["inside"])
+        self.assertEqual(seen["name"], ".clip-cutter-data")
+
+    def test_lunch_inspect_compound_is_not_a_render(self):
+        trace = {
+            "text": "T1: Opening hit\nB3: Double",
+            "tools": [
+                {"name": "Bash", "args": {"command": "ls -la && head -80 scripts/clip-cutter; echo home"}},
+                {"name": "Bash", "args": {"command": "scripts/clip-cutter --date 2026-09-27 --team CHC --plan-only --max-seconds 300"}},
+            ],
+            "outputs": "",
+            "opaque": False,
+        }
+        self.assertEqual(lunch_check(trace)["status"], "PASS")
+
+    def test_lunch_compound_render_still_fails(self):
+        trace = {
+            "text": "T1: Opening hit\nB3: Double",
+            "tools": [
+                {"name": "Bash", "args": {"command": "ls -la && scripts/clip-cutter --date 2026-09-27 --team CHC --max-seconds 300"}},
+            ],
+            "outputs": "",
+            "opaque": False,
+        }
+        with self.assertRaises(Problem) as caught:
+            lunch_check(trace)
+        self.assertEqual(str(caught.exception), "Clip command without --plan-only observed")
+        self.assertEqual(caught.exception.status, "FAIL")
 
     def test_result_only_trace_blocked(self):
         value = {"type": "result", "subtype": "success", "is_error": False, "result": "323"}
