@@ -86,7 +86,39 @@ def cold_command(target, binary, prompt, expected_path=None, case=None):
         return [binary, "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", prompt]
     # --trust is required for a non-interactive start in the throwaway temp project.
     # Do not pass --force/--yolo: those auto-approve command execution.
-    return [binary, "-p", prompt, "--output-format", "stream-json", "--mode", "ask", "--trust"]
+    command = [binary, "-p", prompt, "--output-format", "stream-json", "--trust"]
+    if case == "lunch-reel":
+        # Default agent mode can run shell; --mode ask/plan are read-only.
+        return command
+    return command + ["--mode", "ask"]
+
+
+def write_cursor_lunch_permissions(root):
+    """Allow only plan-only cutter commands in the throwaway Cursor project.
+
+    Cursor's project config (`.cursor/cli.json`) can set permissions. The
+    global approval mode is allowlist, and print mode rejects unapproved
+    commands unless --force is passed. This file is the least-privilege
+    alternative to --force: only clip-cutter/reel2.py invocations that
+    include --plan-only are auto-approved, including the common
+    `cd <skill> && scripts/clip-cutter ... --plan-only` form.
+    """
+    config = Path(root) / ".cursor" / "cli.json"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    value = {
+        "version": 1,
+        "permissions": {
+            "allow": [
+                "Shell(scripts/clip-cutter:*--plan-only*)",
+                "Shell(python3:*reel2.py*--plan-only*)",
+                "Shell(cd:*clip-cutter*--plan-only*)",
+                "Shell(cd:*reel2.py*--plan-only*)",
+            ],
+            "deny": ["Shell(ffmpeg)", "Shell(ffprobe)"],
+        },
+    }
+    config.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    return config
 
 
 def discover(target, binary, cwd, name, expected, timeout):

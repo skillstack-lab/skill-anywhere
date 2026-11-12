@@ -148,6 +148,8 @@ def cold(target, binary, installed, scope, name, prompt, timeout, case):
         else:
             expected_path = installed / "SKILL.md"
         discovery = adapters.discover(target, binary, root, name, expected_path, min(timeout, 20))
+        if target == "cursor" and case == "lunch-reel":
+            adapters.write_cursor_lunch_permissions(root)
         env = dict(os.environ)
         env["CLIP_CUTTER_HOME"] = str(root / ".clip-cutter-data")
         env["PYTHONDONTWRITEBYTECODE"] = "1"

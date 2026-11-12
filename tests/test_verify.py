@@ -58,9 +58,34 @@ class VerifyTests(unittest.TestCase):
         command = adapters.cold_command("cursor", "agent", "hello")
         self.assertIn("--trust", command)
         self.assertIn("--mode", command)
+        self.assertEqual(command[command.index("--mode") + 1], "ask")
         self.assertNotIn("--yolo", command)
         self.assertNotIn("--force", command)
         self.assertNotIn("-f", command)
+
+    def test_cursor_lunch_reel_uses_agent_mode_not_ask(self):
+        command = adapters.cold_command("cursor", "agent", "hello", case="lunch-reel")
+        self.assertIn("--trust", command)
+        self.assertNotIn("--mode", command)
+        self.assertNotIn("ask", command)
+        self.assertNotIn("plan", command)
+        self.assertNotIn("--yolo", command)
+        self.assertNotIn("--force", command)
+        self.assertNotIn("-f", command)
+
+    def test_cursor_lunch_permissions_are_plan_only(self):
+        root = self.root / "cursor-project"
+        root.mkdir()
+        path = adapters.write_cursor_lunch_permissions(root)
+        value = json.loads(path.read_text(encoding="utf-8"))
+        allow = " ".join(value["permissions"]["allow"])
+        deny = " ".join(value["permissions"]["deny"])
+        self.assertIn("--plan-only", allow)
+        self.assertIn("clip-cutter", allow)
+        self.assertIn("reel2.py", allow)
+        self.assertNotIn("--force", allow)
+        self.assertIn("ffmpeg", deny)
+        self.assertIn("ffprobe", deny)
 
     def test_negative_load_fails_all_adapters(self):
         for target in ("claude", "codex", "cursor"):
