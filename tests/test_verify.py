@@ -276,21 +276,21 @@ class VerifyTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["trigger"]["status"], "PASS")
         self.assertEqual(sum("-p" in c["args"] for c in self.calls()), 1)
 
-    def test_lunch_creates_clip_cutter_home(self):
+    def test_lunch_does_not_precreate_clip_cutter_home(self):
         seen = {}
         real_run = adapters.run
 
         def wrapped(argv, cwd, timeout, env=None):
             if env and env.get("CLIP_CUTTER_HOME"):
                 home = Path(env["CLIP_CUTTER_HOME"])
-                seen["exists"] = home.is_dir()
+                seen["exists"] = home.exists()
                 seen["inside"] = Path(cwd) in home.parents or home.parent == Path(cwd)
                 seen["name"] = home.name
             return real_run(argv, cwd, timeout, env)
 
         with patch("skill_anywhere.adapters.run", wrapped):
             self.assertEqual(self.lunch()["status"], "PASS")
-        self.assertTrue(seen["exists"])
+        self.assertFalse(seen["exists"])  # the skill wrapper, not the harness, must create it
         self.assertTrue(seen["inside"])
         self.assertEqual(seen["name"], ".clip-cutter-data")
 

@@ -161,9 +161,8 @@ def cold(target, binary, installed, scope, name, prompt, timeout, case):
         if target == "cursor" and case == "lunch-reel":
             adapters.write_cursor_lunch_permissions(root)
         env = dict(os.environ)
-        home = root / ".clip-cutter-data"
-        home.mkdir(parents=True, exist_ok=True)
-        env["CLIP_CUTTER_HOME"] = str(home)
+        # Deliberately NOT created: the skill's wrapper must create its own data home on a cold start.
+        env["CLIP_CUTTER_HOME"] = str(root / ".clip-cutter-data")
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         proc = adapters.run(adapters.cold_command(target, binary, prompt, expected_path, case), root, timeout, env)
         if proc.returncode != 0:
