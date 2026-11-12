@@ -380,6 +380,28 @@ class VerifyTests(unittest.TestCase):
         self.assertTrue(answer_has_plan("- top 1: Homer\n- bot 1: Strikeout\n- bot 5: Dive"))
         self.assertFalse(answer_has_plan("- **Bot 1:** Strikeout\n- **Top 1:** Homer"))
 
+    def test_saved_live_transcripts_are_plans(self):
+        folder = Path(__file__).with_name("transcripts")
+        names = sorted(path.name for path in folder.glob("*.txt"))
+        self.assertEqual(names, ["claude_bold_bullets.txt", "claude_numbered.txt", "cursor_plain_bullets.txt"])
+        for name in names:
+            with self.subTest(name):
+                self.assertTrue(answer_has_plan((folder / name).read_text()))
+
+    def test_list_markdown_prefixes_are_normalized(self):
+        for prefix in ("- ", "* ", "+ ", "• ", "  - ", "1. ", "12. ", "3) ", "   4.  ", "", "- **", "1. **", "_"):
+            suffix = "**" if prefix.endswith("**") else "_" if prefix == "_" else ""
+            with self.subTest(prefix=prefix):
+                text = "%sTop 1:%s Homer\n%sBot 1:%s Strikeout\n%sTop 3:%s Homer again" % ((prefix, suffix) * 3)
+                self.assertTrue(answer_has_plan(text))
+
+    def test_empty_or_out_of_order_markdown_plans_still_fail(self):
+        self.assertFalse(answer_has_plan(""))
+        self.assertFalse(answer_has_plan("Here is the plan:\n1. Homer\n2. Strikeout"))  # list but no inning labels
+        self.assertFalse(answer_has_plan("1. **Bottom 1:** Strikeout\n2. **Top 1:** Homer"))
+        self.assertFalse(answer_has_plan("- **Top 3:** Homer\n- **Top 1:** Opener"))
+        self.assertFalse(answer_has_plan("3) Top 9: Late\n4) Top 2: Early"))
+
     def test_cursor_unknown_event_is_opaque(self):
         values = [
             {"type": "system", "subtype": "init"},

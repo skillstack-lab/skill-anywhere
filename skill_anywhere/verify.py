@@ -93,11 +93,21 @@ def answer_has_plan(text):
             return True
     items = []
     for line in text.splitlines():
-        line = re.sub(r"[*_`]", "", line)  # markdown emphasis, e.g. "- **Top 1:** headline"
-        match = re.match(r"\s*(?:[-*]\s*)?(T\d{1,2}|B\d{1,2}|(?:Top|Bot|Bottom)\s+\d{1,2}|\d{1,2}(?:st|nd|rd|th)?)\s*[:—–-]\s*(\S.+)", line, re.I)
+        match = INNING_ITEM.match(normalize_list_line(line))
         if match:
             items.append(inning_key(match[1]))
     return bool(items) and items == sorted(items)
+
+
+LIST_PREFIX = re.compile(r"\s*(?:[-*+•]|\d{1,3}[.)])\s+")
+INNING_ITEM = re.compile(r"(T\d{1,2}|B\d{1,2}|(?:Top|Bot|Bottom)\s+\d{1,2}|\d{1,2}(?:st|nd|rd|th)?)\s*[:—–-]\s*(\S.+)", re.I)
+
+
+def normalize_list_line(line):
+    """Strip ordinary list markdown (bold/italic/code marks, then one bullet or `N.`/`N)` prefix)."""
+    line = re.sub(r"[*_`]", "", line)
+    # Bullets such as "- " or "* " (emphasis marks are gone by now, so "* " cannot be bold) and "12." / "3)".
+    return LIST_PREFIX.sub("", line, count=1).lstrip()
 
 
 CUTTER_PATH = re.compile(r"(?:scripts/clip-cutter|scripts/reel2\.py)\b")
